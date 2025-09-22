@@ -28,30 +28,22 @@ cmaker {
 }
 
 val androidMinSdkVersion = 26
-val androidTargetSdkVersion = 35
-val androidCompileSdkVersion = 35
-val androidCompileNdkVersion = "28.0.13004108"
+val androidTargetSdkVersion = 36
+val androidCompileSdkVersion = 36
+val androidCompileNdkVersion = "28.2.13676358"
 val androidSourceCompatibility = JavaVersion.VERSION_21
 val androidTargetCompatibility = JavaVersion.VERSION_21
 val managerVersionCode by extra(getVersionCode())
 val managerVersionName by extra(getVersionName())
 
 fun getGitCommitCount(): Int {
-    val out = ByteArrayOutputStream()
-    exec {
-        commandLine("git", "rev-list", "--count", "HEAD")
-        standardOutput = out
-    }
-    return out.toString().trim().toInt()
+    val process = Runtime.getRuntime().exec(arrayOf("git", "rev-list", "--count", "HEAD"))
+    return process.inputStream.bufferedReader().use { it.readText().trim().toInt() }
 }
 
 fun getGitDescribe(): String {
-    val out = ByteArrayOutputStream()
-    exec {
-        commandLine("git", "describe", "--tags", "--always")
-        standardOutput = out
-    }
-    return out.toString().trim()
+    val process = Runtime.getRuntime().exec(arrayOf("git", "describe", "--tags", "--always"))
+    return process.inputStream.bufferedReader().use { it.readText().trim() }
 }
 
 fun getVersionCode(): Int {
@@ -69,6 +61,7 @@ subprojects {
         extensions.configure(CommonExtension::class.java) {
             compileSdk = androidCompileSdkVersion
             ndkVersion = androidCompileNdkVersion
+            buildToolsVersion = "36.1.0"
 
             defaultConfig {
                 minSdk = androidMinSdkVersion
