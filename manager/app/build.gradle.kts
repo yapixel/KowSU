@@ -40,8 +40,8 @@ android {
         prefab = true
     }
 
-    kotlinOptions {
-        jvmTarget = "21"
+    kotlin {
+        jvmToolchain(21)
     }
 
     packaging {
