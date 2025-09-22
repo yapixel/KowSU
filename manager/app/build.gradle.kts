@@ -90,6 +90,9 @@ android {
     androidResources {
         generateLocaleConfig = true
     }
+    compileSdk = 36
+    buildToolsVersion = "36.0.0"
+    ndkVersion = "28.2.13676358"
 }
 
 ksp {
