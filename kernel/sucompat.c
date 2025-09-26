@@ -269,6 +269,7 @@ static struct kprobe *su_kps[4];
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static struct kprobe *devpts_kp; // for devpts hook
+static DEFINE_MUTEX(ksu_rp_sucompat_lock); // for reg/unreg lock
 
 // every little bit helps here
 __attribute__((hot, no_stack_protector))
@@ -347,7 +348,9 @@ static struct kretprobe *init_kretprobe(const char *symbol,
 	rp->data_size = data_size;
 	rp->maxactive = maxactive;
 
+	mutex_lock(&ksu_rp_sucompat_lock);
 	int ret = register_kretprobe(rp);
+	mutex_unlock(&ksu_rp_sucompat_lock);
 	if (ret) {
 		kfree(rp);
 		return NULL;
@@ -362,19 +365,11 @@ static void destroy_kretprobe(struct kretprobe **rp_ptr)
 	if (!rp_ptr || !*rp_ptr)
 		return;
 
+	mutex_lock(&ksu_rp_sucompat_lock);
 	unregister_kretprobe(*rp_ptr);
+	mutex_unlock(&ksu_rp_sucompat_lock);
 	kfree(*rp_ptr);
 	*rp_ptr = NULL;
-}
-
-static struct task_struct *unregister_thread;
-
-static int kp_sucompat_exit_fn(void *data)
-{
-	pr_info("rp_sucompat: unregister getname_flags!\n");
-	destroy_kretprobe(&getname_rp);
-	destroy_kprobe(&devpts_kp);
-	return 0;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -392,9 +387,7 @@ void ksu_sucompat_init()
 
 void ksu_sucompat_exit()
 {
-	unregister_thread = kthread_run(kp_sucompat_exit_fn, NULL, "kprobe_unregister");
-	if (IS_ERR(unregister_thread)) {
-		unregister_thread = NULL;
-		return;
-	}
+	pr_info("rp_sucompat: unregister getname_flags!\n");
+	destroy_kretprobe(&getname_rp);
+	destroy_kprobe(&devpts_kp);
 }
