@@ -191,7 +191,84 @@ int ksu_handle_devpts(struct inode *inode)
 	return 0;
 }
 
+#ifdef CONFIG_KPROBES
+
+static int faccessat_handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	struct pt_regs *real_regs = PT_REAL_REGS(regs);
+	int *dfd = (int *)&PT_REGS_PARM1(real_regs);
+	const char __user **filename_user =
+		(const char **)&PT_REGS_PARM2(real_regs);
+	int *mode = (int *)&PT_REGS_PARM3(real_regs);
+
+	return ksu_handle_faccessat(dfd, filename_user, mode, NULL);
+}
+
+static int newfstatat_handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	struct pt_regs *real_regs = PT_REAL_REGS(regs);
+	int *dfd = (int *)&PT_REGS_PARM1(real_regs);
+	const char __user **filename_user =
+		(const char **)&PT_REGS_PARM2(real_regs);
+	int *flags = (int *)&PT_REGS_SYSCALL_PARM4(real_regs);
+
+	return ksu_handle_stat(dfd, filename_user, flags);
+}
+
+static int execve_handler_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	struct pt_regs *real_regs = PT_REAL_REGS(regs);
+	const char __user **filename_user =
+		(const char **)&PT_REGS_PARM1(real_regs);
+
+	return ksu_handle_execve_sucompat(AT_FDCWD, filename_user, NULL, NULL,
+					  NULL);
+}
+
+static int pts_unix98_lookup_pre(struct kprobe *p, struct pt_regs *regs)
+{
+	struct inode *inode;
+	struct file *file = (struct file *)PT_REGS_PARM2(regs);
+	inode = file->f_path.dentry->d_inode;
+
+	return ksu_handle_devpts(inode);
+}
+
+static struct kprobe *init_kprobe(const char *name,
+				  kprobe_pre_handler_t handler)
+{
+	struct kprobe *kp = kzalloc(sizeof(struct kprobe), GFP_KERNEL);
+	if (!kp)
+		return NULL;
+	kp->symbol_name = name;
+	kp->pre_handler = handler;
+
+	int ret = register_kprobe(kp);
+	pr_info("sucompat: register_%s kprobe: %d\n", name, ret);
+	if (ret) {
+		kfree(kp);
+		return NULL;
+	}
+
+	return kp;
+}
+
+static void destroy_kprobe(struct kprobe **kp_ptr)
+{
+	struct kprobe *kp = *kp_ptr;
+	if (!kp)
+		return;
+	unregister_kprobe(kp);
+	synchronize_rcu();
+	kfree(kp);
+	*kp_ptr = NULL;
+}
+
+static struct kprobe *su_kps[4];
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static struct kprobe *devpts_kp; // for devpts hook
 
 // every little bit helps here
 __attribute__((hot, no_stack_protector))
@@ -296,83 +373,18 @@ static int kp_sucompat_exit_fn(void *data)
 {
 	pr_info("rp_sucompat: unregister getname_flags!\n");
 	destroy_kretprobe(&getname_rp);
+	destroy_kprobe(&devpts_kp);
 	return 0;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-
-#ifdef CONFIG_KPROBES
-
-static int faccessat_handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-	struct pt_regs *real_regs = PT_REAL_REGS(regs);
-	int *dfd = (int *)&PT_REGS_PARM1(real_regs);
-	const char __user **filename_user =
-		(const char **)&PT_REGS_PARM2(real_regs);
-	int *mode = (int *)&PT_REGS_PARM3(real_regs);
-
-	return ksu_handle_faccessat(dfd, filename_user, mode, NULL);
-}
-
-static int newfstatat_handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-	struct pt_regs *real_regs = PT_REAL_REGS(regs);
-	int *dfd = (int *)&PT_REGS_PARM1(real_regs);
-	const char __user **filename_user =
-		(const char **)&PT_REGS_PARM2(real_regs);
-	int *flags = (int *)&PT_REGS_SYSCALL_PARM4(real_regs);
-
-	return ksu_handle_stat(dfd, filename_user, flags);
-}
-
-static int execve_handler_pre(struct kprobe *p, struct pt_regs *regs)
-{
-	struct pt_regs *real_regs = PT_REAL_REGS(regs);
-	const char __user **filename_user =
-		(const char **)&PT_REGS_PARM1(real_regs);
-
-	return ksu_handle_execve_sucompat(AT_FDCWD, filename_user, NULL, NULL,
-					  NULL);
-}
-
-static struct kprobe *init_kprobe(const char *name,
-				  kprobe_pre_handler_t handler)
-{
-	struct kprobe *kp = kzalloc(sizeof(struct kprobe), GFP_KERNEL);
-	if (!kp)
-		return NULL;
-	kp->symbol_name = name;
-	kp->pre_handler = handler;
-
-	int ret = register_kprobe(kp);
-	pr_info("sucompat: register_%s kprobe: %d\n", name, ret);
-	if (ret) {
-		kfree(kp);
-		return NULL;
-	}
-
-	return kp;
-}
-
-static void destroy_kprobe(struct kprobe **kp_ptr)
-{
-	struct kprobe *kp = *kp_ptr;
-	if (!kp)
-		return;
-	unregister_kprobe(kp);
-	synchronize_rcu();
-	kfree(kp);
-	*kp_ptr = NULL;
-}
-
-static struct kprobe *su_kps[3];
 #endif
 
 // sucompat: permited process can execute 'su' to gain root access.
 void ksu_sucompat_init()
 {
 	pr_info("%s: register getname_flags!\n", __func__);
+	devpts_kp = init_kprobe("pts_unix98_lookup", pts_unix98_lookup_pre);
 	getname_rp = init_kretprobe("getname_flags", getname_flags_entry_handler,
 			getname_flags_ret_handler, sizeof(int), 20);
 
