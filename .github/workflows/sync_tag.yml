@@ -1,4 +1,4 @@
-name: Sync Upstream Tags and Releases
+name: Sync Upstream Tags
 
 on:
   schedule:
@@ -29,47 +29,16 @@ jobs:
           git remote add upstream https://github.com/KOWX712/KernelSU.git
           git fetch upstream --tags
 
-      - name: Sync tags and assets
+      - name: Sync tags
         run: |
           NEW_TAGS=$(git tag | grep -Fv -f <(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | grep -v '\^{}'))
           
           if [ -z "$NEW_TAGS" ]; then
-            echo "No new tags or releases to sync."
+            echo "No new tags to sync."
             exit 0
           fi
 
           for TAG in $NEW_TAGS; do
             echo "Processing tag: $TAG"
-            
             git push origin "$TAG"
-
-            UPSTREAM_RELEASE_JSON=$(gh release view "$TAG" -R KOWX712/KernelSU --json title,body,isDraft,isPrerelease 2>/dev/null || echo "")
-
-            if [ -n "$UPSTREAM_RELEASE_JSON" ]; then
-              echo "Found upstream release for $TAG. Syncing assets..."
-              
-              TITLE=$(echo "$UPSTREAM_RELEASE_JSON" | jq -r .title)
-              BODY=$(echo "$UPSTREAM_RELEASE_JSON" | jq -r .body)
-              IS_PRERELEASE=$(echo "$UPSTREAM_RELEASE_JSON" | jq -r .isPrerelease)
-              
-              mkdir -p "assets-$TAG"
-              cd "assets-$TAG"
-              
-              gh release download "$TAG" -R KOWX712/KernelSU
-              
-              FLAGS=""
-              if [ "$IS_PRERELEASE" = "true" ]; then
-                FLAGS="--prerelease"
-              fi
-              
-              gh release create "$TAG" * \
-                --title "$TITLE" \
-                --notes "$BODY" \
-                $FLAGS
-                
-              cd ..
-              rm -rf "assets-$TAG"
-            else
-              echo "No official upstream release found for tag $TAG. Skipped asset syncing."
-            fi
           done
