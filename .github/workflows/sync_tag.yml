@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -19,26 +18,27 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure Git identity
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
       - name: Add upstream remote and fetch tags
         run: |
           git remote add upstream https://github.com/KOWX712/KernelSU.git
           git fetch upstream --tags
 
-      - name: Sync tags
+      - name: Sync tags via API
         run: |
-          NEW_TAGS=$(git tag | grep -Fv -f <(git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | grep -v '\^{}'))
+          # 获取所有远端 origin 已有的标签
+          git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' | grep -v '\^{}' > origin_tags.txt
           
-          if [ -z "$NEW_TAGS" ]; then
-            echo "No new tags to sync."
-            exit 0
-          fi
-
-          for TAG in $NEW_TAGS; do
-            echo "Processing tag: $TAG"
-            git push origin "$TAG"
+          # 获取上游所有的标签和对应的完整 Commit SHA
+          git show-ref --tags | grep "refs/tags/" | while read -r SHA REF; do
+            TAG_NAME=$(echo "$REF" | sed 's|refs/tags/||')
+            
+            # 如果这个标签在 origin 中不存在，且属于 upstream
+            if ! grep -qx "$TAG_NAME" origin_tags.txt; then
+              echo "Creating tag $TAG_NAME on origin at $SHA via API..."
+              
+              # 使用 GitHub API 直接在远端仓库创建对应的 Git Reference
+              gh api repos/${{ github.repository }}/git/refs \
+                -f ref="refs/tags/$TAG_NAME" \
+                -f sha="$SHA" || echo "Failed to create tag $TAG_NAME"
+            fi
           done
